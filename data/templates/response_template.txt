@@ -1,0 +1,2 @@
+Category: {audit_label}
+Explanation: {explanation}

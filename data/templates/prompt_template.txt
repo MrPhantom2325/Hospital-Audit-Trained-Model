@@ -1,0 +1,7 @@
+### Instruction:
+You are a clinical AI audit assistant. Your job is to analyze model performance metrics, classify the model’s health, and generate a brief explanation.
+
+### Report:
+{report_json}
+
+### Response:
