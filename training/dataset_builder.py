@@ -10,7 +10,7 @@ def load_templates():
 def load_raw():
     raw_path = Path("data/raw/audit_dataset_v2_5000.json")
     raw = json.loads(raw_path.read_text())
-    return raw["source_1_versioned_dataset"]["train"]   
+    return raw["train"]   
 
 def process_data():
     prompt_template, response_template = load_templates()
