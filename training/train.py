@@ -1,81 +1,84 @@
 import json
 from pathlib import Path
-import math
-import torch
 from datasets import load_dataset
 from transformers import (
-  Autotokenizer,
-  AutomodelForCausalLM,
-  TrainingArguments,
-  Trainer,
-  DataCollatorForLanguageModeling
- )
-from peft import get_peft_model, prepare_model_for_kbit_training, set_peft_model_state_dict
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    TrainingArguments,
+    Trainer,
+    DataCollatorForLanguageModeling
+)
+from peft import get_peft_model, prepare_model_for_kbit_training
 from lora_config import get_lora_config
 
 model_name = "microsoft/Phi-3-mini-4k-instruct"
 train_file = "data/processed/train.jsonl"
 test_file = "data/processed/test.jsonl"
-output_dir= "models/lora/phi3-mini-lora"
+Output_dir = "models/phi3-auditor-lora"
 
-Max_length = 512
+max_len = 512
 batch_size = 4
 grad_accum = 4
 epochs = 3
-learning_rate = 1e-4
+lr = 1e-4
+
 
 def load_processed_dataset():
-    dataset=load_dataset("json", data_files=
-                         { "train": train_file,
-                           "test": test_file} )
-    return dataset
-
-def tokenize_function(examples,tokenizer):
-    instructions_data = examples["instruction"]
-    input_data = examples["input"]
-    output_data = examples["output"]
-
-    text=[
-        f"<|system|> You are an AI model analyzing clinical audit reports.\n"
-        f"<|user|>\n{instruction}\n\nReport:\n{input_data}\n"
-        f"<|assistant|>\n{output_data}"
-    ]
-
-    return tokenizer(
-        text,
-        truncation=True,
-        max_length=Max_length,
-        padding="max_length"
+    return load_dataset(
+        "json",
+        data_files={"train": train_file, "test": test_file}
     )
 
-def main():
-    print("Loading tokenizer and model:", model_name)
+def apply_format(example):
 
+    system_prompt = "You are an AI auditor analyzing clinical model performance reports."
+    
+    text = (
+        f"<|system|>\n{system_prompt}\n"
+        f"<|user|>\nInstruction: {example['instruction']}\n\nReport:\n{example['input']}\n"
+        f"<|assistant|>\n{example['output']}"
+    )
+
+    return text
+
+
+def tokenize(batch, tokenizer):
+    merged_text = [apply_format(x) for x in batch]
+    return tokenizer(
+        merged_text,
+        truncation=True,
+        padding="max_length",
+        max_length=max_len
+    )
+
+
+def main():
+    print("\n=== Loading tokenizer & model ===")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenizer.pad_token = tokenizer.eos_token
 
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        load_in_4bit=True,
-        device_map="auto"
+        device_map="auto",
+        load_in_4bit=True
     )
 
     print("Preparing model for QLoRA…")
     model = prepare_model_for_kbit_training(model)
 
-    lora_config = get_lora_config()
-    print("Using LoRA config:", lora_config)
-
-    model = get_peft_model(model, lora_config)
+    print("Loading LoRA config…")
+    lora_cfg = get_lora_config()
+    model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
 
     print("Loading dataset…")
     dataset = load_processed_dataset()
 
-    print("✏ Tokenizing dataset…")
-    tokenized_dataset = dataset.map(
-        lambda x: tokenize_function(x, tokenizer),
-        batched=False
+    print("Tokenizing dataset…")
+    tokenized = dataset.map(
+        lambda batch: tokenize(batch, tokenizer),
+        batched=True,
+        remove_columns=dataset["train"].column_names
     )
 
     data_collator = DataCollatorForLanguageModeling(
@@ -84,17 +87,17 @@ def main():
     )
 
     training_args = TrainingArguments(
-        output_dir=output_dir,
+        output_dir=Output_dir,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         gradient_accumulation_steps=grad_accum,
-        learning_rate=learning_rate,
+        learning_rate=lr,
         num_train_epochs=epochs,
         warmup_ratio=0.1,
-        logging_steps=20,
-        save_steps=200,
+        logging_steps=25,
         evaluation_strategy="steps",
         eval_steps=200,
+        save_steps=200,
         fp16=True,
         report_to="none"
     )
@@ -102,20 +105,19 @@ def main():
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=tokenized_dataset["train"],
-        eval_dataset=tokenized_dataset["test"],
-        data_collator=data_collator
+        train_dataset=tokenized["train"],
+        eval_dataset=tokenized["test"],
+        data_collator=data_collator,
     )
 
-    print("Starting training…")
+    print("\n=== Training Started ===")
     trainer.train()
 
-    print("Saving LoRA adapter to:", output_dir)
-    model.save_pretrained(output_dir)
-    tokenizer.save_pretrained(output_dir)
+    print("\n=== Saving Adapter ===")
+    model.save_pretrained(Output_dir)
+    tokenizer.save_pretrained(Output_dir)
 
-    print("Training complete!")
-
+    print("\nTraining complete!")
 
 if __name__ == "__main__":
     main()
