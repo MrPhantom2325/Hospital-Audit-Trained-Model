@@ -99,13 +99,15 @@ def main():
         learning_rate=lr,
         num_train_epochs=epochs,
         warmup_ratio=0.1,
-        logging_steps=25,
-        evaluation_strategy="steps",
+        logging_steps=20,
+        eval_strategy="steps",
         eval_steps=200,
+        save_strategy="steps",
         save_steps=200,
         fp16=True,
         report_to="none"
-    )
+)
+
 
     trainer = Trainer(
         model=model,
