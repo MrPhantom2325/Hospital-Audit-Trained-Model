@@ -29,27 +29,32 @@ def load_processed_dataset():
         data_files={"train": train_file, "test": test_file}
     )
 
-def apply_format(example):
 
+def apply_format(instruction, input_text, output_text):
     system_prompt = "You are an AI auditor analyzing clinical model performance reports."
-    
-    text = (
+
+    return (
         f"<|system|>\n{system_prompt}\n"
-        f"<|user|>\nInstruction: {example['instruction']}\n\nReport:\n{example['input']}\n"
-        f"<|assistant|>\n{example['output']}"
+        f"<|user|>\nInstruction: {instruction}\n\nReport:\n{input_text}\n"
+        f"<|assistant|>\n{output_text}"
     )
 
-    return text
 
 
 def tokenize(batch, tokenizer):
-    merged_text = [apply_format(x) for x in batch]
+    texts = []
+
+    for instr, inp, outp in zip(batch["instruction"], batch["input"], batch["output"]):
+        formatted = apply_format(instr, inp, outp)
+        texts.append(formatted)
+
     return tokenizer(
-        merged_text,
+        texts,
         truncation=True,
         padding="max_length",
         max_length=max_len
     )
+
 
 
 def main():
