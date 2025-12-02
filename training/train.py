@@ -1,130 +1,134 @@
 import json
-from pathlib import Path
 from datasets import load_dataset
+import torch
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     TrainingArguments,
     Trainer,
-    DataCollatorForLanguageModeling
+    DataCollatorForLanguageModeling,
+    BitsAndBytesConfig,
 )
 from peft import get_peft_model, prepare_model_for_kbit_training
 from lora_config import get_lora_config
 
-model_name = "microsoft/Phi-3-mini-4k-instruct"
-train_file = "data/processed/train.jsonl"
-test_file = "data/processed/test.jsonl"
-Output_dir = "models/phi3-auditor-lora"
 
-max_len = 512
-batch_size = 4
-grad_accum = 4
-epochs = 3
-lr = 1e-4
+MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
 
+TRAIN_FILE = "data/processed/train.jsonl"
+TEST_FILE = "data/processed/test.jsonl"
+OUTPUT_DIR = "models/phi3-auditor-lora-8bit"
 
-def load_processed_dataset():
-    return load_dataset(
-        "json",
-        data_files={"train": train_file, "test": test_file}
-    )
+MAX_LEN = 512
+BATCH_SIZE = 4
+GRAD_ACCUM = 4
+EPOCHS = 3
+LR = 1e-4
 
 
-def apply_format(instruction, input_text, output_text):
+def format_example(instruction, report_json, output_text):
+
     system_prompt = "You are an AI auditor analyzing clinical model performance reports."
 
     return (
         f"<|system|>\n{system_prompt}\n"
-        f"<|user|>\nInstruction: {instruction}\n\nReport:\n{input_text}\n"
+        f"<|user|>\nInstruction: {instruction}\n\nReport:\n{report_json}\n"
         f"<|assistant|>\n{output_text}"
     )
 
 
-
-def tokenize(batch, tokenizer):
-    texts = []
-
-    for instr, inp, outp in zip(batch["instruction"], batch["input"], batch["output"]):
-        formatted = apply_format(instr, inp, outp)
-        texts.append(formatted)
+def tokenize_batch(batch, tokenizer):
+    texts = [
+        format_example(instr, inp, outp)
+        for instr, inp, outp in zip(batch["instruction"], batch["input"], batch["output"])
+    ]
 
     return tokenizer(
         texts,
         truncation=True,
         padding="max_length",
-        max_length=max_len
+        max_length=MAX_LEN,
     )
-
 
 
 def main():
-    print("\n=== Loading tokenizer & model ===")
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    tokenizer.pad_token = tokenizer.eos_token
+    print("\n=== Loading tokenizer ===")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        device_map="auto",
-        load_in_4bit=True
+    print("=== Loading base model in 8-bit with LoRA ===")
+    quant_config = BitsAndBytesConfig(
+        load_in_8bit=True
     )
 
-    print("Preparing model for QLoRA…")
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_NAME,
+        quantization_config=quant_config,
+        device_map="auto",
+    )
+
+
     model = prepare_model_for_kbit_training(model)
 
-    print("Loading LoRA config…")
+    print("=== Applying LoRA config ===")
     lora_cfg = get_lora_config()
     model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
 
-    print("Loading dataset…")
-    dataset = load_processed_dataset()
+    print("=== Loading JSONL dataset ===")
+    dataset = load_dataset(
+        "json",
+        data_files={"train": TRAIN_FILE, "test": TEST_FILE}
+    )
 
-    print("Tokenizing dataset…")
+    print("=== Tokenizing dataset ===")
     tokenized = dataset.map(
-        lambda batch: tokenize(batch, tokenizer),
+        lambda batch: tokenize_batch(batch, tokenizer),
         batched=True,
-        remove_columns=dataset["train"].column_names
+        remove_columns=dataset["train"].column_names,
     )
 
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer,
-        mlm=False
+        mlm=False,
     )
 
+    print("=== Setting up training args ===")
     training_args = TrainingArguments(
-        output_dir=Output_dir,
-        per_device_train_batch_size=batch_size,
-        per_device_eval_batch_size=batch_size,
-        gradient_accumulation_steps=grad_accum,
-        learning_rate=lr,
-        num_train_epochs=epochs,
+        output_dir=OUTPUT_DIR,
+        num_train_epochs=EPOCHS,
+        per_device_train_batch_size=BATCH_SIZE,
+        per_device_eval_batch_size=BATCH_SIZE,
+        gradient_accumulation_steps=GRAD_ACCUM,
+        learning_rate=LR,
         warmup_ratio=0.1,
-        logging_steps=20,
-        eval_strategy="steps",
-        eval_steps=200,
+        logging_steps=50,
         save_strategy="steps",
-        save_steps=200,
-        fp16=True,
-        report_to="none"
-)
-
+        save_steps=500,
+        save_total_limit=3,
+        fp16=torch.cuda.is_available(),
+        report_to="none",
+    )
 
     trainer = Trainer(
         model=model,
         args=training_args,
+        tokenizer=tokenizer,
         train_dataset=tokenized["train"],
         eval_dataset=tokenized["test"],
         data_collator=data_collator,
     )
 
-    print("\n=== Training Started ===")
+    print("\n=== Training started ===")
     trainer.train()
 
-    print("\n=== Saving Adapter ===")
-    model.save_pretrained(Output_dir)
-    tokenizer.save_pretrained(Output_dir)
+    print("\n=== Saving LoRA adapter + tokenizer ===")
+    trainer.save_model(OUTPUT_DIR)
+    tokenizer.save_pretrained(OUTPUT_DIR)
 
-    print("\nTraining complete!")
+    print("\n Training complete! LoRA 8-bit model saved at:", OUTPUT_DIR)
+
 
 if __name__ == "__main__":
     main()
