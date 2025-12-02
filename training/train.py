@@ -1,6 +1,7 @@
 import json
 from datasets import load_dataset
 import torch
+import numpy as np
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
