@@ -26,4 +26,4 @@ print("Saving tokenizer...")
 tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
 tokenizer.save_pretrained(MERGED_OUTPUT_PATH)
 
-print("✅ Merge complete! Load the model from:", MERGED_OUTPUT_PATH)
+print("Merge complete! Load the model from:", MERGED_OUTPUT_PATH)
