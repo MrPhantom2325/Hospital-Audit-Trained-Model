@@ -13,7 +13,7 @@ model = AutoModelForCausalLM.from_pretrained(
     device_map="auto" if torch.cuda.is_available() else None
 )
 
-print("Model loaded successfully.\n")
+print("Model loaded successfully.")
 
 def generate_response(report_text: str, instruction: str = "Analyze the clinical model report and classify its health."):
     prompt = (
@@ -42,20 +42,15 @@ def generate_response(report_text: str, instruction: str = "Analyze the clinical
     return response
 
 
-# === USER INPUT MODE ===
-print("Enter your clinical model performance report in JSON format:")
-print("(Example: {'accuracy': 0.87, 'precision': 0.82, 'recall': 0.80, 'f1_score': 0.81, 'loss': 0.45})")
-print("Press Enter twice when done.\n")
+print("Running sample test...")
+sample_report = """{
+  "accuracy": 0.87,
+  "precision": 0.82,
+  "recall": 0.80,
+  "f1_score": 0.81,
+  "loss": 0.45
+}"""
 
-# Read multi-line input from user
-user_input = ""
-while True:
-    line = input()
-    if line == "":
-        break
-    user_input += line + "\n"
-
-print("\nRunning analysis...\n")
-output = generate_response(user_input)
-print("=== AI Audit Output ===\n")
+output = generate_response(sample_report)
+print("\nAI Audit Output ===")
 print(output)
